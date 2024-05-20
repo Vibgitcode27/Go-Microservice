@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"gihub.com/Vibgitcode27/rssBack/handlers"
 	"github.com/go-chi/chi/v5"
@@ -53,9 +54,32 @@ func (a *App) Start(ctx context.Context) error {
 		Handler: a.router,
 	}
 
-	e := server.ListenAndServe()
-	if e != nil {
-		return fmt.Errorf("failed to server: %w", e)
+	fmt.Println("Connecting to redis server")
+
+	errRedis := a.rdb.Ping(ctx).Err()
+
+	if errRedis != nil {
+		return fmt.Errorf("failed to connect with redis: %w", errRedis)
+	}
+
+	ch := make(chan error, 1)
+
+	fmt.Println("Server running at port", port)
+	go func() {
+		e := server.ListenAndServe()
+		if e != nil {
+			ch <- fmt.Errorf("failed to server: %w", e)
+		}
+		close(ch)
+	}()
+
+	ctx.Done()
+	select {
+	case err = <-ch:
+		return err
+	case <-ctx.Done():
+		timeout, cancel := context.WithTimeout(context.Background(), time.Second*10)
+		return server.Shutdown(timeout)
 	}
 
 	return nil
